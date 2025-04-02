@@ -1,24 +1,12 @@
-var algoliasearch = require('algoliasearch/lite');
 var bindEvent = require('aframe-event-decorators').bindEvent;
 
-var client = algoliasearch('QULTOY3ZWU', 'be07164192471df7e97e6fa70c1d041d');
-var algolia = client.initIndex('supersaber');
-
-/**
- * Search (including the initial list of popular searches).
- * Attached to super-keyboard.
- */
 AFRAME.registerComponent('search', {
   init: function () {
     this.eventDetail = {query: '', results: []};
     this.popularHits = null;
-    this.queryObject = {hitsPerPage: 100, query: ''};
 
-    // Populate popular.
+    // Fetch popular songs on init.
     this.search('');
-
-    // Less hits on normal searches.
-    this.queryObject.hitsPerPage = 30;
 
     this.el.sceneEl.addEventListener('searchclear', () => { this.search(''); });
   },
@@ -29,7 +17,9 @@ AFRAME.registerComponent('search', {
   }),
 
   search: function (query) {
-    // Use cached for popular hits.
+    const self = this;
+
+    // Use cache for popular songs.
     if (!query && this.popularHits) {
       this.eventDetail.results = this.popularHits;
       this.eventDetail.query = '';
@@ -37,62 +27,70 @@ AFRAME.registerComponent('search', {
       return;
     }
 
-    this.eventDetail.query = query;
-    this.queryObject.query = query;
-    algolia.search(this.queryObject, (err, content) => {
-      // Cache popular hits.
-      if (err) {
-        this.el.sceneEl.emit('searcherror', null, false);
-        console.error(err);
-        return;
-      }
+    fetch(`https://api.beatsaver.com/search/text/0?q=${encodeURIComponent(query)}`)
+      .then(res => res.json())
+      .then(data => {
+        const hits = data.docs.map((item, i) => ({
+          objectID: item.id,
+          title: item.name,
+          author: item.uploader?.name || 'Unknown',
+          coverURL: item.versions?.[0]?.coverURL || '',
+          downloadURL: item.versions?.[0]?.downloadURL || '',
+          index: i
+        }));
 
-      if (!query) { this.popularHits = content.hits; }
-      this.eventDetail.results = content.hits;
-      this.el.sceneEl.emit('searchresults', this.eventDetail);
-    });
+        if (!query) { self.popularHits = hits; }
+
+        self.eventDetail.query = query;
+        self.eventDetail.results = hits;
+        self.el.sceneEl.emit('searchresults', self.eventDetail);
+      })
+      .catch(err => {
+        console.error('BeatSaver search failed:', err);
+        self.el.sceneEl.emit('searcherror', null, false);
+      });
   }
 });
 
-/**
- * Select genre filter.
- */
+// Fallback genre search using manual filtering
 AFRAME.registerComponent('search-genre', {
   init: function () {
     this.eventDetail = {isGenreSearch: true, genre: '', results: []};
-    this.queryObject = {
-      filters: '',
-      hitsPerPage: 100
-    };
 
     this.el.addEventListener('click', evt => {
-      this.search(evt.target.closest('.genre').dataset.bindForKey);
+      const genre = evt.target.closest('.genre').dataset.bindForKey;
+      this.search(genre);
     });
   },
 
   search: function (genre) {
-    if (genre === 'Video Games') {
-      this.queryObject.filters = `genre:"Video Game" OR genre:"Video Games"`;
-    } else {
-      this.queryObject.filters = `genre:"${genre}"`;
-    }
-    algolia.search(this.queryObject, (err, content) => {
-      if (err) {
-        this.el.sceneEl.emit('searcherror', null, false);
-        console.error(err);
-        return;
-      }
+    const self = this;
 
-      this.eventDetail.genre = genre;
-      this.eventDetail.results = content.hits;
-      this.el.sceneEl.emit('searchresults', this.eventDetail);
-    });
+    // No real genre filter on BeatSaver, emulate with query
+    fetch(`https://api.beatsaver.com/search/text/0?q=${encodeURIComponent(genre)}`)
+      .then(res => res.json())
+      .then(data => {
+        const hits = data.docs.map((item, i) => ({
+          objectID: item.id,
+          title: item.name,
+          author: item.uploader?.name || 'Unknown',
+          coverURL: item.versions?.[0]?.coverURL || '',
+          downloadURL: item.versions?.[0]?.downloadURL || '',
+          index: i
+        }));
+
+        self.eventDetail.genre = genre;
+        self.eventDetail.results = hits;
+        self.el.sceneEl.emit('searchresults', self.eventDetail);
+      })
+      .catch(err => {
+        console.error('BeatSaver genre search failed:', err);
+        self.el.sceneEl.emit('searcherror', null, false);
+      });
   }
 });
 
-/**
- * Click listener for search result.
- */
+// The rest of your original components remain the same
 AFRAME.registerComponent('search-result-list', {
   init: function () {
     const obv = new MutationObserver(mutations => {
